@@ -174,6 +174,7 @@ internal sealed class MainForm : Form
         MaximizeBox = false;
         MinimizeBox = false;
         ShowIcon = false;
+        try { Icon = Icon.ExtractAssociatedIcon(Application.ExecutablePath); } catch { }
         ClientSize = new Size(430, 540);
         DoubleBuffered = true;
         BackColor = Color.FromArgb(248, 250, 252);
@@ -950,6 +951,8 @@ internal sealed class StatusIconControl : Control
         }
     }
 }
+
+
 
 
 
