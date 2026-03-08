@@ -1,4 +1,0 @@
-任务描述：
-当启动该脚本后，直接设置以下两个程序的优先级为低、相关性只用CPU最大那个处理这个程序。
-"C:\Program Files\AntiCheatExpert\SGuard\x64\SGuard64.exe"
-"C:\Program Files\AntiCheatExpert\SGuard\x64\SGuardSvc64.exe"
