@@ -1,0 +1,134 @@
+<!DOCTYPE html>
+
+<html lang="en"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>Process Status Dashboard</title>
+<!-- Tailwind CSS v3 with plugins -->
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<!-- BEGIN: Custom Configuration -->
+<script>
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              primary: '#3b82f6',
+              success: '#10b981',
+              error: '#ef4444',
+              bg: '#f8fafc'
+            }
+          },
+          animation: {
+            'fade-in': 'fadeIn 0.3s ease-out',
+            'slide-up': 'slideUp 0.4s ease-out'
+          },
+          keyframes: {
+            fadeIn: {
+              '0%': { opacity: '0' },
+              '100%': { opacity: '1' },
+            },
+            slideUp: {
+              '0%': { transform: 'translateY(10px)', opacity: '0' },
+              '100%': { transform: 'translateY(0)', opacity: '1' },
+            }
+          }
+        }
+      }
+    }
+  </script>
+<!-- END: Custom Configuration -->
+<style data-purpose="layout-refinements">
+    .glass-effect {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(8px);
+      -webkit-backdrop-filter: blur(8px);
+      border: 1px solid rgba(0, 0, 0, 0.05);
+    }
+    
+    body {
+      background: linear-gradient(135deg, #f8fafc 0%, #e2e8f0 100%);
+    }
+  </style>
+</head>
+<body class="flex items-center justify-center min-h-screen bg-slate-50 m-0 p-0 overflow-hidden">
+<!-- BEGIN: Main Content Area -->
+<main class="w-full max-w-md flex flex-col items-center justify-center gap-12 animate-fade-in" data-purpose="main-application-container">
+<!-- Spacer for centering alignment -->
+<div class="flex items-center justify-center w-full">
+<!-- BEGIN: Status Modal (Success State) -->
+<!-- Toggle 'hidden' class to switch between states for demo purposes -->
+<section class="glass-effect rounded-3xl p-8 max-w-md w-full text-center animate-fade-in shadow-xl" data-purpose="status-display-success" id="status-modal-success">
+<div class="mb-6 flex justify-center"><div class="bg-slate-100 p-4 rounded-full">
+<svg class="h-16 w-16 text-slate-400" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div></div>
+<h2 class="text-3xl font-bold text-slate-800 mb-2" style="">等待启动</h2>
+<p class="text-slate-500 text-lg" style="">点击下方按钮开始任务</p>
+</section>
+<!-- END: Status Modal (Success State) -->
+<!-- BEGIN: Status Modal (Failure State) - Hidden by default -->
+<section class="hidden glass-effect rounded-3xl p-8 max-w-md w-full text-center animate-fade-in shadow-xl" data-purpose="status-display-failure" id="status-modal-failure">
+<div class="mb-6 flex justify-center">
+<!-- Failure Icon -->
+<div class="bg-brand-error/10 p-4 rounded-full">
+<svg class="h-16 w-16 text-brand-error" fill="none" stroke="currentColor" stroke-width="2" viewbox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+<path d="M12 8v4m0 4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" stroke-linecap="round" stroke-linejoin="round"></path>
+</svg>
+</div>
+</div>
+<h2 class="text-3xl font-bold text-slate-800 mb-2" style="">操作失败</h2>
+<div class="bg-red-50 rounded-xl p-4 mt-4 border border-red-100">
+<p class="text-brand-error font-medium" style="">错误详情：</p>
+<p class="text-slate-600 text-sm mt-1" style="">连接超时。请检查您的网络连接并重试。服务器当前未响应请求。</p>
+</div>
+</section>
+<!-- END: Status Modal (Failure State) -->
+</div>
+<!-- BEGIN: Footer Actions -->
+<footer class="w-full flex flex-col items-center gap-6" data-purpose="bottom-controls">
+<!-- Toggle helper (just for presentation/demo) -->
+<!-- Main Action Button -->
+<button class="group relative inline-flex items-center justify-center px-12 py-4 font-bold text-white transition-all duration-200 bg-brand-primary rounded-full hover:bg-blue-600 focus:outline-none focus:ring-4 focus:ring-blue-300 shadow-lg shadow-blue-500/30 active:scale-95" data-purpose="primary-action-button" id="start-btn" style=""><span class="text-xl tracking-widest">启动</span></button>
+<p class="text-slate-400 text-sm" style="">点击按钮开始运行</p>
+</footer>
+<!-- END: Footer Actions -->
+</main>
+<!-- END: Main Content Area -->
+<!-- BEGIN: Interactive Logic -->
+<script data-purpose="ui-interaction-logic">
+    /**
+     * Toggles between Success and Failure modal states for demonstration
+     * @param {string} state - 'success' or 'failure'
+     */
+    function toggleState(state) {
+      const successModal = document.getElementById('status-modal-success');
+      const failureModal = document.getElementById('status-modal-failure');
+      const startBtn = document.getElementById('start-btn');
+
+      if (state === 'success') {
+        successModal.classList.remove('hidden');
+        failureModal.classList.add('hidden');
+        startBtn.className = startBtn.className.replace('bg-brand-error', 'bg-brand-primary').replace('hover:bg-red-600', 'hover:bg-blue-600');
+      } else {
+        successModal.classList.add('hidden');
+        failureModal.classList.remove('hidden');
+        // Visually change button if needed, or keep it standard
+      }
+    }
+
+    // Button click handler
+    document.getElementById('start-btn').addEventListener('click', function() {
+      this.classList.add('opacity-80');
+      this.innerHTML = '<span class="flex items-center"><svg class="animate-spin -ml-1 mr-3 h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>处理中...</span>';
+      
+      // Reset after 1.5s for demo
+      setTimeout(() => {
+        this.classList.remove('opacity-80');
+        this.innerHTML = '<span class="text-xl tracking-widest">启动</span>';
+      }, 1500);
+    });
+  </script>
+<!-- END: Interactive Logic -->
+</body></html>

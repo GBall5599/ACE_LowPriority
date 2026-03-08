@@ -2,7 +2,14 @@
 setlocal
 
 set "SCRIPT_DIR=%~dp0"
-set "POWERSHELL_EXE=%SystemRoot%\System32\WindowsPowerShell\v1.0\powershell.exe"
+set "APP_EXE=%SCRIPT_DIR%ACE_LowPriority.exe"
 
-"%POWERSHELL_EXE%" -NoProfile -ExecutionPolicy Bypass -File "%SCRIPT_DIR%set-ace-process.ps1"
+if not exist "%APP_EXE%" (
+    echo ERROR: "%APP_EXE%" not found.
+    echo Please run build-exe.ps1 first.
+    pause
+    exit /b 1
+)
+
+"%APP_EXE%"
 exit /b %ERRORLEVEL%
