@@ -5,10 +5,10 @@
 Set-StrictMode -Version Latest
 $ErrorActionPreference = 'Stop'
 
-function New-IconFileFromPng {
+function New-IconFileFromImage {
     param(
         [Parameter(Mandatory = $true)]
-        [string]$PngPath,
+        [string]$ImagePath,
 
         [Parameter(Mandatory = $true)]
         [string]$IcoPath
@@ -17,7 +17,7 @@ function New-IconFileFromPng {
     Add-Type -AssemblyName System.Drawing
 
     $sizes = @(16, 32, 48, 64, 128, 256)
-    $sourceImage = [System.Drawing.Image]::FromFile($PngPath)
+    $sourceImage = [System.Drawing.Image]::FromFile($ImagePath)
 
     try {
         $iconFrames = New-Object System.Collections.Generic.List[byte[]]
@@ -100,13 +100,13 @@ if (-not (Test-Path -LiteralPath $sourcePath)) {
     throw "Source file not found: $sourcePath"
 }
 
-$iconPngPath = Join-Path $PSScriptRoot 'icon.png'
+$iconSourcePath = Join-Path $PSScriptRoot '红温猫.jpg'
 $iconIcoPath = Join-Path $PSScriptRoot 'ACE_LowPriority.ico'
-if (-not (Test-Path -LiteralPath $iconPngPath)) {
-    throw "Icon source not found: $iconPngPath"
+if (-not (Test-Path -LiteralPath $iconSourcePath)) {
+    throw "Icon source not found: $iconSourcePath"
 }
 
-New-IconFileFromPng -PngPath $iconPngPath -IcoPath $iconIcoPath
+New-IconFileFromImage -ImagePath $iconSourcePath -IcoPath $iconIcoPath
 
 $provider = New-Object Microsoft.CSharp.CSharpCodeProvider
 $compilerParameters = New-Object System.CodeDom.Compiler.CompilerParameters
@@ -134,4 +134,5 @@ if ($errors.Count -gt 0) {
 }
 
 Write-Host "Build succeeded: $OutputPath" -ForegroundColor Green
-Write-Host "Icon embedded from: $iconPngPath" -ForegroundColor Green
+Write-Host "Icon embedded from: $iconSourcePath" -ForegroundColor Green
+
