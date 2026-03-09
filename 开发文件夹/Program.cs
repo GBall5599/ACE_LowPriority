@@ -10,14 +10,15 @@ using System.Security.Principal;
 using System.Threading;
 using System.Windows.Forms;
 using System.Reflection;
+using Microsoft.Win32;
 
 [assembly: AssemblyTitle("ACE_LowPriority")]
 [assembly: AssemblyDescription("ACE 低优先级工具")]
 [assembly: AssemblyCompany("GBall5599")]
 [assembly: AssemblyProduct("ACE_LowPriority")]
-[assembly: AssemblyVersion("1.1.0.0")]
-[assembly: AssemblyFileVersion("1.1.0.0")]
-[assembly: AssemblyInformationalVersion("1.1.0")]
+[assembly: AssemblyVersion("1.2.0.0")]
+[assembly: AssemblyFileVersion("1.2.0.0")]
+[assembly: AssemblyInformationalVersion("1.2")]
 
 internal enum AppState
 {
@@ -53,6 +54,122 @@ internal enum CloseChoice
     Exit
 }
 
+internal sealed class AppSettings
+{
+    private const string SettingsDirectoryName = "ACE_LowPriority";
+    private const string SettingsFileName = "settings.ini";
+
+    public bool StartWithWindows { get; set; }
+
+    public bool AutoExecute { get; set; }
+
+    public static int AutoExecutePollIntervalMilliseconds
+    {
+        get { return 5000; }
+    }
+
+    public static AppSettings Load()
+    {
+        AppSettings settings = new AppSettings();
+        string settingsPath = GetSettingsFilePath();
+        if (!File.Exists(settingsPath))
+        {
+            return settings;
+        }
+
+        string[] lines = File.ReadAllLines(settingsPath);
+        for (int index = 0; index < lines.Length; index++)
+        {
+            string line = lines[index];
+            int separatorIndex = line.IndexOf('=');
+            if (separatorIndex <= 0)
+            {
+                continue;
+            }
+
+            string key = line.Substring(0, separatorIndex).Trim();
+            string value = line.Substring(separatorIndex + 1).Trim();
+            bool parsedValue;
+            if (!bool.TryParse(value, out parsedValue))
+            {
+                continue;
+            }
+
+            if (string.Equals(key, "StartWithWindows", StringComparison.OrdinalIgnoreCase))
+            {
+                settings.StartWithWindows = parsedValue;
+            }
+            else if (string.Equals(key, "AutoExecute", StringComparison.OrdinalIgnoreCase))
+            {
+                settings.AutoExecute = parsedValue;
+            }
+        }
+
+        return settings;
+    }
+
+    public void Save()
+    {
+        string settingsPath = GetSettingsFilePath();
+        string directoryPath = Path.GetDirectoryName(settingsPath);
+        if (!Directory.Exists(directoryPath))
+        {
+            Directory.CreateDirectory(directoryPath);
+        }
+
+        File.WriteAllLines(settingsPath, new string[]
+        {
+            string.Format("StartWithWindows={0}", StartWithWindows),
+            string.Format("AutoExecute={0}", AutoExecute)
+        });
+    }
+
+    public AppSettings Clone()
+    {
+        return new AppSettings
+        {
+            StartWithWindows = StartWithWindows,
+            AutoExecute = AutoExecute
+        };
+    }
+
+    private static string GetSettingsFilePath()
+    {
+        string appDataPath = Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData);
+        return Path.Combine(appDataPath, SettingsDirectoryName, SettingsFileName);
+    }
+}
+
+internal static class StartupRegistrationManager
+{
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string ValueName = "ACE_LowPriority";
+
+    internal static void Apply(bool enabled)
+    {
+        using (RegistryKey runKey = Registry.CurrentUser.CreateSubKey(RunKeyPath))
+        {
+            if (runKey == null)
+            {
+                throw new InvalidOperationException("无法打开开机启动注册表项。");
+            }
+
+            if (enabled)
+            {
+                runKey.SetValue(ValueName, BuildCommandLine(), RegistryValueKind.String);
+            }
+            else if (runKey.GetValue(ValueName) != null)
+            {
+                runKey.DeleteValue(ValueName, false);
+            }
+        }
+    }
+
+    private static string BuildCommandLine()
+    {
+        return string.Format("\"{0}\" --start-in-tray", Application.ExecutablePath);
+    }
+}
 internal static class Program
 {
     [STAThread]
@@ -248,8 +365,10 @@ internal sealed class MainForm : Form
     private readonly RoundedButton _actionButton;
     private readonly Label _footerHintLabel;
     private readonly System.Windows.Forms.Timer _loadingTimer;
+    private readonly System.Windows.Forms.Timer _autoExecuteTimer;
     private readonly Label _windowTitleLabel;
     private readonly WindowCaptionButton _minimizeButton;
+    private readonly WindowCaptionButton _settingsButton;
     private readonly WindowCaptionButton _closeButton;
     private readonly NotifyIcon _notifyIcon;
     private readonly ContextMenuStrip _trayMenu;
@@ -258,6 +377,9 @@ internal sealed class MainForm : Form
     private readonly ToolStripMenuItem _exitMenuItem;
 
     private readonly bool _autoStart;
+    private readonly bool _startInTray;
+    private readonly HashSet<int> _processedProcessIds;
+    private AppSettings _settings;
     private AppState _currentState;
     private int _loadingFrame;
     private bool _busy;
@@ -273,6 +395,9 @@ internal sealed class MainForm : Form
     public MainForm(string[] args)
     {
         _autoStart = HasArgument(args, "--auto-start");
+        _startInTray = HasArgument(args, "--start-in-tray");
+        _processedProcessIds = new HashSet<int>();
+        _settings = AppSettings.Load();
 
         Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
         Text = "ACE 低优先级工具";
@@ -351,6 +476,10 @@ internal sealed class MainForm : Form
         _minimizeButton.ButtonKind = CaptionButtonKind.Minimize;
         _minimizeButton.Click += MinimizeButton_Click;
 
+        _settingsButton = new WindowCaptionButton();
+        _settingsButton.ButtonKind = CaptionButtonKind.Settings;
+        _settingsButton.Click += SettingsButton_Click;
+
         _closeButton = new WindowCaptionButton();
         _closeButton.ButtonKind = CaptionButtonKind.Close;
         _closeButton.Click += CloseButton_Click;
@@ -374,11 +503,16 @@ internal sealed class MainForm : Form
         Controls.Add(_footerHintLabel);
         Controls.Add(_windowTitleLabel);
         Controls.Add(_minimizeButton);
+        Controls.Add(_settingsButton);
         Controls.Add(_closeButton);
 
         _loadingTimer = new System.Windows.Forms.Timer();
         _loadingTimer.Interval = 350;
         _loadingTimer.Tick += LoadingTimer_Tick;
+
+        _autoExecuteTimer = new System.Windows.Forms.Timer();
+        _autoExecuteTimer.Interval = AppSettings.AutoExecutePollIntervalMilliseconds;
+        _autoExecuteTimer.Tick += AutoExecuteTimer_Tick;
 
         _trayMenu = new ContextMenuStrip();
         _showWindowMenuItem = new ToolStripMenuItem("显示主界面");
@@ -417,6 +551,7 @@ internal sealed class MainForm : Form
         MouseDown += DragSurface_MouseDown;
 
         SetState(AppState.Waiting, null, null);
+        ApplySettings(_settings, false);
         LayoutControls();
         UpdateFormRegion();
     }
@@ -644,6 +779,101 @@ internal sealed class MainForm : Form
         SetState(AppState.Failure, description, errorMessage);
     }
 
+    private void ApplySettings(AppSettings settings, bool persist)
+    {
+        _settings = settings.Clone();
+
+        if (persist)
+        {
+            _settings.Save();
+            StartupRegistrationManager.Apply(_settings.StartWithWindows);
+        }
+
+        ConfigureAutoExecute();
+    }
+
+    private void ConfigureAutoExecute()
+    {
+        if (_settings.AutoExecute)
+        {
+            _autoExecuteTimer.Start();
+        }
+        else
+        {
+            _autoExecuteTimer.Stop();
+            _processedProcessIds.Clear();
+        }
+    }
+
+    private void AutoExecuteTimer_Tick(object sender, EventArgs e)
+    {
+        CheckAutoExecuteTargets();
+    }
+
+    private void CheckAutoExecuteTargets()
+    {
+        if (!_settings.AutoExecute || _busy)
+        {
+            return;
+        }
+
+        HashSet<int> runningProcessIds;
+        if (!TryGetAllTargetProcessIds(out runningProcessIds))
+        {
+            _processedProcessIds.Clear();
+            return;
+        }
+
+        _processedProcessIds.IntersectWith(runningProcessIds);
+        if (_processedProcessIds.SetEquals(runningProcessIds))
+        {
+            return;
+        }
+
+        BeginOperation();
+    }
+
+    private void SettingsButton_Click(object sender, EventArgs e)
+    {
+        try
+        {
+            using (SettingsDialog dialog = new SettingsDialog(_settings))
+            {
+                if (dialog.ShowDialog(this) == DialogResult.OK)
+                {
+                    ApplySettings(dialog.Settings, true);
+                    if (_settings.AutoExecute)
+                    {
+                        CheckAutoExecuteTargets();
+                    }
+                }
+            }
+        }
+        catch (Exception ex)
+        {
+            ShowFailure("设置保存失败，请检查配置后重试。", ex.Message);
+            RestoreFromTray();
+            Activate();
+        }
+    }
+
+    private void SyncProcessedProcessIds()
+    {
+        HashSet<int> runningProcessIds;
+        if (!TryGetAllTargetProcessIds(out runningProcessIds))
+        {
+            _processedProcessIds.Clear();
+            return;
+        }
+
+        _processedProcessIds.Clear();
+        foreach (int processId in runningProcessIds)
+        {
+            _processedProcessIds.Add(processId);
+        }
+    }
+
+
     private void NotifyIcon_MouseDoubleClick(object sender, MouseEventArgs e)
     {
         if (e.Button == MouseButtons.Left)
@@ -787,6 +1017,7 @@ internal sealed class MainForm : Form
             _titleLabel.Text = "正在处理中";
             _descriptionLabel.Text = description;
             _actionButton.Enabled = false;
+
             _actionButton.Text = "处理中";
             _actionButton.NormalColor = Color.FromArgb(59, 130, 246);
             _actionButton.HoverColor = Color.FromArgb(59, 130, 246);
@@ -837,7 +1068,8 @@ internal sealed class MainForm : Form
 
         _windowTitleLabel.Bounds = new Rectangle(18, 12, 180, 28);
         _closeButton.Bounds = new Rectangle(ClientSize.Width - 18 - 26, 12, 26, 26);
-        _minimizeButton.Bounds = new Rectangle(_closeButton.Left - 6 - 26, 12, 26, 26);
+        _settingsButton.Bounds = new Rectangle(_closeButton.Left - 6 - 26, 12, 26, 26);
+        _minimizeButton.Bounds = new Rectangle(_settingsButton.Left - 6 - 26, 12, 26, 26);
 
         _cardPanel.Bounds = new Rectangle(cardLeft, cardTop, cardWidth, cardHeight);
 
@@ -881,8 +1113,37 @@ internal sealed class MainForm : Form
         return false;
     }
 
+    private static bool TryGetAllTargetProcessIds(out HashSet<int> processIds)
+    {
+        processIds = new HashSet<int>();
 
+        foreach (string targetPath in Targets)
+        {
+            IList<Process> processes;
+            try
+            {
+                processes = GetTargetProcesses(targetPath);
+            }
+            catch (Exception)
+            {
+                processIds.Clear();
+                return false;
+            }
 
+            if (processes == null || processes.Count == 0)
+            {
+                processIds.Clear();
+                return false;
+            }
+
+            for (int index = 0; index < processes.Count; index++)
+            {
+                processIds.Add(processes[index].Id);
+            }
+        }
+
+        return processIds.Count > 0;
+    }
 
     private static IList<Process> GetTargetProcesses(string executablePath)
     {
@@ -1157,6 +1418,7 @@ internal sealed class RoundedButton : Button
 internal enum CaptionButtonKind
 {
     Minimize,
+    Settings,
     Close
 }
 
@@ -1170,7 +1432,7 @@ internal sealed class WindowCaptionButton : Control
     {
         Size = new Size(26, 26);
         Cursor = Cursors.Hand;
-        ForeColor = Color.FromArgb(37, 99, 235);
+        ForeColor = Color.FromArgb(148, 163, 184);
         SetStyle(ControlStyles.AllPaintingInWmPaint | ControlStyles.OptimizedDoubleBuffer | ControlStyles.ResizeRedraw | ControlStyles.UserPaint | ControlStyles.SupportsTransparentBackColor, true);
         BackColor = Color.Transparent;
     }
@@ -1222,6 +1484,33 @@ internal sealed class WindowCaptionButton : Control
                 float y = Height * 0.62F;
                 e.Graphics.DrawLine(pen, Width * 0.32F, y, Width * 0.68F, y);
             }
+            else if (ButtonKind == CaptionButtonKind.Settings)
+            {
+                float centerX = Width / 2F;
+                float centerY = Height / 2F;
+                float outerRadius = Math.Min(Width, Height) * 0.26F;
+                float innerRadius = Math.Min(Width, Height) * 0.18F;
+                float toothRadius = Math.Min(Width, Height) * 0.34F;
+                PointF[] points = new PointF[16];
+
+                for (int index = 0; index < points.Length; index++)
+                {
+                    double angle = (-Math.PI / 2D) + (Math.PI / 8D) * index;
+                    float radius = (index % 2 == 0) ? toothRadius : outerRadius;
+                    points[index] = new PointF(
+                        centerX + (float)(Math.Cos(angle) * radius),
+                        centerY + (float)(Math.Sin(angle) * radius));
+                }
+
+                using (GraphicsPath gearPath = new GraphicsPath())
+                using (SolidBrush gearBrush = new SolidBrush(ForeColor))
+                using (SolidBrush holeBrush = new SolidBrush(fillColor.A > 0 ? fillColor : Color.FromArgb(239, 246, 255)))
+                {
+                    gearPath.AddPolygon(points);
+                    e.Graphics.FillPath(gearBrush, gearPath);
+                    e.Graphics.FillEllipse(holeBrush, centerX - innerRadius, centerY - innerRadius, innerRadius * 2F, innerRadius * 2F);
+                }
+            }
             else
             {
                 e.Graphics.DrawLine(pen, Width * 0.34F, Height * 0.34F, Width * 0.66F, Height * 0.66F);
@@ -1272,6 +1561,175 @@ internal sealed class WindowCaptionButton : Control
     }
 }
 
+internal sealed class SettingsDialog : Form
+{
+    private readonly Label _titleLabel;
+    private readonly Label _descriptionLabel;
+    private readonly CheckBox _startupCheckBox;
+    private readonly CheckBox _autoExecuteCheckBox;
+    private readonly Label _autoExecuteNoteLabel;
+    private readonly RoundedButton _saveButton;
+    private readonly RoundedButton _cancelButton;
+    private readonly WindowCaptionButton _closeButton;
+
+    internal SettingsDialog(AppSettings settings)
+    {
+        Settings = settings.Clone();
+
+        Font = new Font("Microsoft YaHei UI", 9F, FontStyle.Regular, GraphicsUnit.Point);
+        Text = "设置";
+        StartPosition = FormStartPosition.CenterParent;
+        FormBorderStyle = FormBorderStyle.None;
+        MaximizeBox = false;
+        MinimizeBox = false;
+        ShowInTaskbar = false;
+        ClientSize = new Size(392, 268);
+        BackColor = Color.FromArgb(239, 246, 255);
+        DoubleBuffered = true;
+
+        _titleLabel = new Label();
+        _titleLabel.Text = "设置";
+        _titleLabel.Font = new Font("Microsoft YaHei UI", 14F, FontStyle.Bold, GraphicsUnit.Point);
+        _titleLabel.ForeColor = Color.FromArgb(30, 41, 59);
+        _titleLabel.TextAlign = ContentAlignment.MiddleCenter;
+        _titleLabel.AutoSize = false;
+        _titleLabel.BackColor = Color.Transparent;
+
+        _descriptionLabel = new Label();
+        _descriptionLabel.Text = "你可以在这里设置开机自启和自动执行。";
+        _descriptionLabel.Font = new Font("Microsoft YaHei UI", 9.5F, FontStyle.Regular, GraphicsUnit.Point);
+        _descriptionLabel.ForeColor = Color.FromArgb(100, 116, 139);
+        _descriptionLabel.TextAlign = ContentAlignment.MiddleCenter;
+        _descriptionLabel.AutoSize = false;
+        _descriptionLabel.BackColor = Color.Transparent;
+
+        _startupCheckBox = new CheckBox();
+        _startupCheckBox.Text = "开机自启";
+        _startupCheckBox.Checked = Settings.StartWithWindows;
+        _startupCheckBox.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+        _startupCheckBox.ForeColor = Color.FromArgb(30, 41, 59);
+        _startupCheckBox.BackColor = Color.Transparent;
+        _startupCheckBox.AutoSize = false;
+        _startupCheckBox.FlatStyle = FlatStyle.Flat;
+
+        _autoExecuteCheckBox = new CheckBox();
+        _autoExecuteCheckBox.Text = "自动执行";
+        _autoExecuteCheckBox.Checked = Settings.AutoExecute;
+        _autoExecuteCheckBox.Font = new Font("Microsoft YaHei UI", 10.5F, FontStyle.Bold, GraphicsUnit.Point);
+        _autoExecuteCheckBox.ForeColor = Color.FromArgb(30, 41, 59);
+        _autoExecuteCheckBox.BackColor = Color.Transparent;
+        _autoExecuteCheckBox.AutoSize = false;
+        _autoExecuteCheckBox.FlatStyle = FlatStyle.Flat;
+
+        _autoExecuteNoteLabel = new Label();
+        _autoExecuteNoteLabel.Text = string.Format("开启后，程序会每 {0} 秒轮询一次目标进程，检测到后自动执行。", AppSettings.AutoExecutePollIntervalMilliseconds / 1000);
+        _autoExecuteNoteLabel.Font = new Font("Microsoft YaHei UI", 8.8F, FontStyle.Regular, GraphicsUnit.Point);
+        _autoExecuteNoteLabel.ForeColor = Color.FromArgb(71, 85, 105);
+        _autoExecuteNoteLabel.TextAlign = ContentAlignment.TopLeft;
+        _autoExecuteNoteLabel.AutoSize = false;
+        _autoExecuteNoteLabel.BackColor = Color.Transparent;
+
+        _saveButton = new RoundedButton();
+        _saveButton.Text = "保存";
+        _saveButton.NormalColor = Color.FromArgb(59, 130, 246);
+        _saveButton.HoverColor = Color.FromArgb(37, 99, 235);
+        _saveButton.DisabledColor = Color.FromArgb(147, 197, 253);
+        _saveButton.Click += SaveButton_Click;
+
+        _cancelButton = new RoundedButton();
+        _cancelButton.Text = "取消";
+        _cancelButton.NormalColor = Color.FromArgb(100, 116, 139);
+        _cancelButton.HoverColor = Color.FromArgb(71, 85, 105);
+        _cancelButton.DisabledColor = Color.FromArgb(148, 163, 184);
+        _cancelButton.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+
+        _closeButton = new WindowCaptionButton();
+        _closeButton.ButtonKind = CaptionButtonKind.Close;
+        _closeButton.Click += delegate { DialogResult = DialogResult.Cancel; Close(); };
+
+        Controls.Add(_titleLabel);
+        Controls.Add(_descriptionLabel);
+        Controls.Add(_startupCheckBox);
+        Controls.Add(_autoExecuteCheckBox);
+        Controls.Add(_autoExecuteNoteLabel);
+        Controls.Add(_saveButton);
+        Controls.Add(_cancelButton);
+        Controls.Add(_closeButton);
+
+        AcceptButton = _saveButton;
+        CancelButton = _cancelButton;
+        Resize += SettingsDialog_Resize;
+        Shown += SettingsDialog_Shown;
+        LayoutDialog();
+        UpdateDialogRegion();
+    }
+
+    internal AppSettings Settings { get; private set; }
+
+    protected override void OnPaint(PaintEventArgs e)
+    {
+        e.Graphics.SmoothingMode = SmoothingMode.AntiAlias;
+        using (SolidBrush backgroundBrush = new SolidBrush(Color.FromArgb(239, 246, 255)))
+        {
+            e.Graphics.FillRectangle(backgroundBrush, ClientRectangle);
+        }
+
+        base.OnPaint(e);
+    }
+
+    private void SettingsDialog_Shown(object sender, EventArgs e)
+    {
+        _saveButton.Focus();
+    }
+
+    private void SettingsDialog_Resize(object sender, EventArgs e)
+    {
+        LayoutDialog();
+        UpdateDialogRegion();
+        Invalidate();
+    }
+
+    private void LayoutDialog()
+    {
+        _closeButton.Bounds = new Rectangle(ClientSize.Width - 16 - 26, 12, 26, 26);
+        _titleLabel.Bounds = new Rectangle(24, 22, ClientSize.Width - 76, 32);
+        _descriptionLabel.Bounds = new Rectangle(26, 56, ClientSize.Width - 52, 28);
+        _startupCheckBox.Bounds = new Rectangle(36, 102, ClientSize.Width - 72, 28);
+        _autoExecuteCheckBox.Bounds = new Rectangle(36, 142, ClientSize.Width - 72, 28);
+        _autoExecuteNoteLabel.Bounds = new Rectangle(60, 174, ClientSize.Width - 96, 38);
+
+        int buttonWidth = 92;
+        int buttonHeight = 42;
+        int spacing = 14;
+        int totalWidth = buttonWidth * 2 + spacing;
+        int left = (ClientSize.Width - totalWidth) / 2;
+        int top = ClientSize.Height - 54;
+
+        _saveButton.Bounds = new Rectangle(left, top, buttonWidth, buttonHeight);
+        _cancelButton.Bounds = new Rectangle(left + buttonWidth + spacing, top, buttonWidth, buttonHeight);
+    }
+
+    private void UpdateDialogRegion()
+    {
+        if (ClientSize.Width <= 0 || ClientSize.Height <= 0)
+        {
+            return;
+        }
+
+        using (GraphicsPath path = RoundedPanel.CreateRoundedPath(new Rectangle(0, 0, ClientSize.Width, ClientSize.Height), 28))
+        {
+            Region = new Region(path);
+        }
+    }
+
+    private void SaveButton_Click(object sender, EventArgs e)
+    {
+        Settings.StartWithWindows = _startupCheckBox.Checked;
+        Settings.AutoExecute = _autoExecuteCheckBox.Checked;
+        DialogResult = DialogResult.OK;
+        Close();
+    }
+}
 internal sealed class ClosePromptDialog : Form
 {
     private readonly Label _titleLabel;
@@ -1534,6 +1992,23 @@ internal sealed class StatusIconControl : Control
         }
     }
 }
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
