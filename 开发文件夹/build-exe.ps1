@@ -1,5 +1,5 @@
 ﻿param(
-    [string]$OutputPath = (Join-Path $PSScriptRoot 'ACE_LowPriority.exe')
+    [string]$OutputPath = (Join-Path (Join-Path $PSScriptRoot '..\exe文件夹') 'ACE_LowPriority.exe')
 )
 
 Set-StrictMode -Version Latest
@@ -100,39 +100,51 @@ if (-not (Test-Path -LiteralPath $sourcePath)) {
     throw "Source file not found: $sourcePath"
 }
 
+$outputDirectory = Split-Path -Path $OutputPath -Parent
+if (-not (Test-Path -LiteralPath $outputDirectory)) {
+    [void](New-Item -ItemType Directory -Force -Path $outputDirectory)
+}
+
 $iconSourcePath = Join-Path $PSScriptRoot '红温猫.jpg'
-$iconIcoPath = Join-Path $PSScriptRoot 'ACE_LowPriority.ico'
 if (-not (Test-Path -LiteralPath $iconSourcePath)) {
     throw "Icon source not found: $iconSourcePath"
 }
 
-New-IconFileFromImage -ImagePath $iconSourcePath -IcoPath $iconIcoPath
+$temporaryIconPath = Join-Path ([System.IO.Path]::GetTempPath()) ('ACE_LowPriority_{0}.ico' -f [System.Guid]::NewGuid().ToString('N'))
 
-$provider = New-Object Microsoft.CSharp.CSharpCodeProvider
-$compilerParameters = New-Object System.CodeDom.Compiler.CompilerParameters
-$compilerParameters.GenerateExecutable = $true
-$compilerParameters.GenerateInMemory = $false
-$compilerParameters.IncludeDebugInformation = $false
-$compilerParameters.TreatWarningsAsErrors = $false
-$compilerParameters.WarningLevel = 4
-$compilerParameters.OutputAssembly = $OutputPath
-$compilerParameters.CompilerOptions = ('/target:winexe /platform:x64 /optimize+ /win32icon:"{0}"' -f $iconIcoPath)
+try {
+    New-IconFileFromImage -ImagePath $iconSourcePath -IcoPath $temporaryIconPath
 
-[void]$compilerParameters.ReferencedAssemblies.Add('System.dll')
-[void]$compilerParameters.ReferencedAssemblies.Add('System.Core.dll')
-[void]$compilerParameters.ReferencedAssemblies.Add('System.Drawing.dll')
-[void]$compilerParameters.ReferencedAssemblies.Add('System.Windows.Forms.dll')
+    $provider = New-Object Microsoft.CSharp.CSharpCodeProvider
+    $compilerParameters = New-Object System.CodeDom.Compiler.CompilerParameters
+    $compilerParameters.GenerateExecutable = $true
+    $compilerParameters.GenerateInMemory = $false
+    $compilerParameters.IncludeDebugInformation = $false
+    $compilerParameters.TreatWarningsAsErrors = $false
+    $compilerParameters.WarningLevel = 4
+    $compilerParameters.OutputAssembly = $OutputPath
+    $compilerParameters.CompilerOptions = ('/target:winexe /platform:x64 /optimize+ /win32icon:"{0}"' -f $temporaryIconPath)
 
-$results = $provider.CompileAssemblyFromFile($compilerParameters, $sourcePath)
-$errors = @($results.Errors | Where-Object { -not $_.IsWarning })
-if ($errors.Count -gt 0) {
-    $messages = foreach ($compilerIssue in $errors) {
-        '{0}({1},{2}): {3}' -f $sourcePath, $compilerIssue.Line, $compilerIssue.Column, $compilerIssue.ErrorText
+    [void]$compilerParameters.ReferencedAssemblies.Add('System.dll')
+    [void]$compilerParameters.ReferencedAssemblies.Add('System.Core.dll')
+    [void]$compilerParameters.ReferencedAssemblies.Add('System.Drawing.dll')
+    [void]$compilerParameters.ReferencedAssemblies.Add('System.Windows.Forms.dll')
+
+    $results = $provider.CompileAssemblyFromFile($compilerParameters, $sourcePath)
+    $errors = @($results.Errors | Where-Object { -not $_.IsWarning })
+    if ($errors.Count -gt 0) {
+        $messages = foreach ($compilerIssue in $errors) {
+            '{0}({1},{2}): {3}' -f $sourcePath, $compilerIssue.Line, $compilerIssue.Column, $compilerIssue.ErrorText
+        }
+
+        throw ($messages -join [Environment]::NewLine)
     }
-
-    throw ($messages -join [Environment]::NewLine)
+}
+finally {
+    if (Test-Path -LiteralPath $temporaryIconPath) {
+        Remove-Item -LiteralPath $temporaryIconPath -Force
+    }
 }
 
 Write-Host "Build succeeded: $OutputPath" -ForegroundColor Green
 Write-Host "Icon embedded from: $iconSourcePath" -ForegroundColor Green
-
