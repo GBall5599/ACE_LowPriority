@@ -384,7 +384,6 @@ internal sealed class MainForm : Form
     private int _loadingFrame;
     private bool _busy;
     private bool _allowExit;
-    private bool _trayHintShown;
 
     [DllImport("user32.dll")]
     private static extern bool ReleaseCapture();
@@ -744,11 +743,7 @@ internal sealed class MainForm : Form
                     if (result.Success)
                     {
                         ShowSuccess(result);
-
-                        if (!Visible || WindowState == FormWindowState.Minimized)
-                        {
-                            ShowTrayBalloon("操作成功", string.Format("已成功设置 {0} 个目标进程。", result.AffectedCount), ToolTipIcon.Info);
-                        }
+                        ShowTrayBalloon("操作成功", string.Format("已成功设置 {0} 个目标进程，仅使用 CPU {1}。", result.AffectedCount, result.LastProcessorIndex), ToolTipIcon.Info);
                     }
                     else
                     {
@@ -928,12 +923,6 @@ internal sealed class MainForm : Form
 
         Hide();
         ShowInTaskbar = false;
-
-        if (!_trayHintShown)
-        {
-            _trayHintShown = true;
-            ShowTrayBalloon("已最小化到托盘", "程序正在后台常驻，可从托盘图标恢复或执行操作。", ToolTipIcon.Info);
-        }
     }
 
     private void RestoreFromTray()
@@ -952,6 +941,24 @@ internal sealed class MainForm : Form
 
     private void ShowTrayBalloon(string title, string text, ToolTipIcon icon)
     {
+        if (_notifyIcon == null || IsDisposed)
+        {
+            return;
+        }
+
+        try
+        {
+            _notifyIcon.BalloonTipTitle = title;
+            _notifyIcon.BalloonTipText = text;
+            _notifyIcon.BalloonTipIcon = icon;
+            _notifyIcon.ShowBalloonTip(3000);
+        }
+        catch (ObjectDisposedException)
+        {
+        }
+        catch (InvalidOperationException)
+        {
+        }
     }
 
     private void UpdateFormRegion()
